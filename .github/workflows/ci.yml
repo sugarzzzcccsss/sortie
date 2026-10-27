@@ -3,9 +3,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened]
+    branches: [validation/claude-background-tasks-20261027-2218]
 
 permissions:
   contents: read
@@ -28,6 +26,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 87f4ed88112fe8c9e64868dd44d25b4d702d7995
           fetch-depth: 0
           persist-credentials: false
 
@@ -76,6 +75,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 87f4ed88112fe8c9e64868dd44d25b4d702d7995
           fetch-depth: 0
           persist-credentials: false
 
@@ -108,6 +108,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 87f4ed88112fe8c9e64868dd44d25b4d702d7995
           fetch-depth: 0
           persist-credentials: false
 
@@ -149,6 +150,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 87f4ed88112fe8c9e64868dd44d25b4d702d7995
           fetch-depth: 0
           persist-credentials: false
 
@@ -184,6 +186,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 87f4ed88112fe8c9e64868dd44d25b4d702d7995
           fetch-depth: 0
           persist-credentials: false
 
@@ -208,6 +211,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 87f4ed88112fe8c9e64868dd44d25b4d702d7995
           persist-credentials: false
 
       - name: Set up Go
@@ -227,6 +231,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 87f4ed88112fe8c9e64868dd44d25b4d702d7995
           fetch-depth: 0
           persist-credentials: false
 
@@ -246,6 +251,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 87f4ed88112fe8c9e64868dd44d25b4d702d7995
           persist-credentials: false
 
       - name: Set up Node
