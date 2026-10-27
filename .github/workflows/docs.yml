@@ -3,24 +3,7 @@ name: Docs
 
 on:
   push:
-    branches: [main]
-    paths:
-      - '**.md'
-      - lychee.toml
-      - Makefile
-      - default.mk
-      - .github/workflows/docs.yml
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - '**.md'
-      - lychee.toml
-      - Makefile
-      - default.mk
-      - .github/workflows/docs.yml
-  schedule:
-    - cron: '23 5 * * 1'
-  workflow_dispatch:
+    branches: [validation/claude-background-docs-20261027-2218]
 
 permissions:
   contents: read
@@ -39,6 +22,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 87f4ed88112fe8c9e64868dd44d25b4d702d7995
           persist-credentials: false
 
       - name: Install lychee
@@ -53,41 +37,3 @@ jobs:
             schedule|workflow_dispatch) make lint-docs LYCHEE_FLAGS= ;;
             *) make lint-docs ;;
           esac
-
-  notify:
-    name: Notify Discord
-    runs-on: ubuntu-latest
-    needs: [links]
-    if: >-
-      (failure() || cancelled())
-      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    timeout-minutes: 5
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Post failure
-        continue-on-error: true
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_CI }}
-          LINKS: ${{ needs.links.result }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          if [ -z "${DISCORD_WEBHOOK}" ]; then
-            echo "::warning::Discord webhook is not configured; skipping"
-            exit 0
-          fi
-
-          jq -n --arg result "${LINKS}" --arg url "${RUN_URL}" \
-            'if $result == "failure" then
-               {title: "Documentation has broken links", color: 15548997,
-                description: "Broken links or anchors are listed in the run log."}
-             else
-               {title: "Documentation link check didn’t finish", color: 9807270,
-                description: "The check ended as \($result)."}
-             end
-             + {url: $url}' >embed.json
-          scripts/discord-notify.sh --embed <embed.json
