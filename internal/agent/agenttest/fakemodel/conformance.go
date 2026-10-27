@@ -217,17 +217,18 @@ const (
 )
 
 type interruption struct {
-	held        bool // holding closed while RunTurn still ran
-	interrupted bool // the interrupt was issued while RunTurn still ran
-	returned    bool // RunTurn returned within interruptBound of the interrupt
-	stopped     bool // ScenarioStop: StopSession returned within its wait
+	held        bool
+	interrupted bool
+	returned    bool
+	stopped     bool
 	stopErr     error
 }
 
 type teardown struct {
-	snapshot  []int                                      // agenttest.LiveDescendants(os.Getpid()) once holding closed, before the interrupt
-	launches  []func() (released bool, cleanupErr error) // Released of each launch record held for a snapshot pid, bound while the request was held
-	stillHeld []Exchange
+	aliveWhileHeld []int
+	heldLaunches   []func() (released bool, cleanupErr error)
+	stillHeld      []Exchange
+	remoteLeft     []string
 }
 
 // sortieStatusTurn is the turn number the scripted session's state file
@@ -258,13 +259,15 @@ func AssertConformance(t *testing.T, b Binding) {
 	if b.SSH != nil {
 		t.Run("tool server over ssh", func(t *testing.T) { runSSHToolServer(t, b, false) })
 		t.Run("tool server over ssh with forwarding refused", func(t *testing.T) { runSSHToolServer(t, b, true) })
+		t.Run("turn cancellation over ssh", func(t *testing.T) { runInterruption(t, b, ScenarioCancellation, &remoteLaunch{variant: b.SSH}) })
+		t.Run("session stop over ssh", func(t *testing.T) { runInterruption(t, b, ScenarioStop, &remoteLaunch{variant: b.SSH}) })
 	}
 	if b.PermissionRefusal != nil {
 		t.Run("permission refusal", func(t *testing.T) { runPermissionRefusal(t, b) })
 	}
-	t.Run("turn cancellation", func(t *testing.T) { runInterruption(t, b, ScenarioCancellation) })
-	t.Run("turn cancellation after output", func(t *testing.T) { runInterruption(t, b, ScenarioCancellationAfterOutput) })
-	t.Run("session stop", func(t *testing.T) { runInterruption(t, b, ScenarioStop) })
+	t.Run("turn cancellation", func(t *testing.T) { runInterruption(t, b, ScenarioCancellation, nil) })
+	t.Run("turn cancellation after output", func(t *testing.T) { runInterruption(t, b, ScenarioCancellationAfterOutput, nil) })
+	t.Run("session stop", func(t *testing.T) { runInterruption(t, b, ScenarioStop, nil) })
 	t.Run("session continuation", func(t *testing.T) { runContinuation(t, b) })
 	t.Run("credential verification context", func(t *testing.T) { runVerificationContext(t, b) })
 }
@@ -410,7 +413,7 @@ func runToolServer(t *testing.T, b Binding) {
 	}
 }
 
-func runSSHToolServer(t *testing.T, b Binding, refused bool) {
+func skipUnlessSSHVariant(t *testing.T, b Binding) {
 	t.Helper()
 
 	if b.SSH.Skip != "" {
@@ -419,6 +422,12 @@ func runSSHToolServer(t *testing.T, b Binding, refused bool) {
 	if reason := agenttest.SSHLabSkipReason(); reason != "" {
 		t.Skip(reason)
 	}
+}
+
+func runSSHToolServer(t *testing.T, b Binding, refused bool) {
+	t.Helper()
+
+	skipUnlessSSHVariant(t, b)
 
 	workspace := newWorkspace(t)
 	_, file := writeScriptedFile(t, workspace)
@@ -471,10 +480,10 @@ type remoteLaunch struct {
 // attach carries NO_PROXY to the remote run: it keeps the loopback model
 // endpoint off a proxy the runtime honors (claude-code sets HTTPS_PROXY for its
 // connection warm-up).
-func (r remoteLaunch) attach(t *testing.T, b Binding, d drive, env Environment, launch *Launch) (host string, envNames []string) {
+func (r remoteLaunch) attach(t *testing.T, b Binding, d drive, env Environment, launch *Launch) (lab agenttest.SSHLab, host string, envNames []string) {
 	t.Helper()
 
-	lab := agenttest.StartSSHLab(t, agenttest.SSHLabParams{
+	lab = agenttest.StartSSHLab(t, agenttest.SSHLabParams{
 		Install: labInstall(t, r.variant),
 		Dirs:    []string{d.workspace},
 		Seed:    []string{env.Home},
@@ -492,9 +501,9 @@ func (r remoteLaunch) attach(t *testing.T, b Binding, d drive, env Environment, 
 	slices.Sort(names)
 	names = slices.Compact(names)
 	if r.refused {
-		return lab.RefusedHost, names
+		return lab, lab.RefusedHost, names
 	}
-	return lab.Host, names
+	return lab, lab.Host, names
 }
 
 func labInstall(t *testing.T, v *SSHVariant) string {
@@ -540,6 +549,7 @@ type preparedSession struct {
 	adapter     domain.AgentAdapter
 	sshHost     string
 	sshEnvNames []string
+	lab         agenttest.SSHLab
 }
 
 func prepareSession(t *testing.T, b Binding, d drive) preparedSession {
@@ -562,8 +572,9 @@ func prepareSession(t *testing.T, b Binding, d drive) preparedSession {
 	launch := b.Launch(t, environment)
 	var sshHost string
 	var sshEnvNames []string
+	var lab agenttest.SSHLab
 	if d.remote != nil {
-		sshHost, sshEnvNames = d.remote.attach(t, b, d, environment, &launch)
+		lab, sshHost, sshEnvNames = d.remote.attach(t, b, d, environment, &launch)
 	}
 	for _, key := range slices.Sorted(maps.Keys(launch.Env)) {
 		t.Setenv(key, launch.Env[key])
@@ -577,7 +588,7 @@ func prepareSession(t *testing.T, b Binding, d drive) preparedSession {
 	if err != nil {
 		t.Fatalf("construct %q adapter error = %v", b.Kind, err)
 	}
-	return preparedSession{environment: environment, launch: launch, events: events, adapter: adapter, sshHost: sshHost, sshEnvNames: sshEnvNames}
+	return preparedSession{environment: environment, launch: launch, events: events, adapter: adapter, sshHost: sshHost, sshEnvNames: sshEnvNames, lab: lab}
 }
 
 func driveTurn(t *testing.T, b Binding, d drive) (run Run, launch Launch, timedOut bool) {
@@ -669,8 +680,12 @@ type turnOutcome struct {
 // runInterruption interrupts a turn the endpoint holds, so the interrupt
 // lands on a runtime provably waiting on the model rather than on one a fixed
 // delay happens to catch mid-turn.
-func runInterruption(t *testing.T, b Binding, scenario Scenario) {
+func runInterruption(t *testing.T, b Binding, scenario Scenario, remote *remoteLaunch) {
 	t.Helper()
+
+	if remote != nil {
+		skipUnlessSSHVariant(t, b)
+	}
 
 	workspace := newWorkspace(t)
 	script, prompt := []Response{{Hold: true}}, "Reply with the word ready."
@@ -686,8 +701,10 @@ func runInterruption(t *testing.T, b Binding, scenario Scenario) {
 		workspace: workspace,
 		settings:  b.Passthrough,
 		prompt:    prompt,
+		remote:    remote,
 	}
 	p := prepareSession(t, b, d)
+	preexisting := agenttest.LiveDescendants(os.Getpid())
 
 	startCtx, startCancel := context.WithTimeout(context.Background(), turnBound)
 	defer startCancel()
@@ -695,6 +712,8 @@ func runInterruption(t *testing.T, b Binding, scenario Scenario) {
 		WorkspacePath: workspace,
 		AgentConfig:   p.launch.Config,
 		Settings:      d.settings,
+		SSHHost:       p.sshHost,
+		SSHEnvNames:   p.sshEnvNames,
 	})
 	if err != nil {
 		t.Fatalf("StartSession() error = %v%s", err, exchangeLines(server.Exchanges()))
@@ -727,8 +746,8 @@ func runInterruption(t *testing.T, b Binding, scenario Scenario) {
 	select {
 	case <-server.holding():
 		in.held = true
-		td.snapshot = agenttest.LiveDescendants(os.Getpid())
-		td.launches = heldLaunches(td.snapshot)
+		td.aliveWhileHeld = slices.DeleteFunc(agenttest.LiveDescendants(os.Getpid()), func(pid int) bool { return slices.Contains(preexisting, pid) })
+		td.heldLaunches = heldLaunches(td.aliveWhileHeld)
 	case turn = <-outcome:
 		ended = true
 	case <-holdCtx.Done():
@@ -776,7 +795,10 @@ func runInterruption(t *testing.T, b Binding, scenario Scenario) {
 	deadline := time.Now().Add(holdEndBound)
 	td.stillHeld = server.awaitHolds(holdEndBound)
 	if livenessChecked {
-		awaitGone(td.snapshot, remainingRuntime, td.launches, deadline)
+		awaitGone(td.aliveWhileHeld, remainingRuntime, td.heldLaunches, deadline)
+	}
+	if remote != nil {
+		td.remoteLeft = awaitRemoteGone(waittest.Context(t), p.lab, deadline)
 	}
 
 	run := Run{
@@ -1214,6 +1236,22 @@ func awaitGone(pids []int, remaining func(pid int) string, launches []func() (bo
 		}
 		return nil
 	})
+}
+
+func awaitRemoteGone(ctx context.Context, lab agenttest.SSHLab, deadline time.Time) []string {
+	var left []string
+	_ = waittest.UntilWithin(max(time.Until(deadline), time.Nanosecond), livenessPoll, func() error {
+		procs, err := lab.Processes(ctx)
+		left = procs
+		if err != nil {
+			left = []string{err.Error()}
+		}
+		if len(left) > 0 {
+			return errors.New("the SSH host still runs the launch")
+		}
+		return nil
+	})
+	return left
 }
 
 // afterToolsListed holds the answer choice makes until the runtime has listed
@@ -1946,17 +1984,20 @@ func runtimeGoneViolations(run Run, remaining func(pid int) string, td teardown)
 	for _, ex := range td.stillHeld {
 		v.add("%s was still held %s after StopSession returned", requestLabel(ex), holdEndBound)
 	}
+	for _, left := range td.remoteLeft {
+		v.add("%q still ran on the SSH host %s after StopSession returned", left, holdEndBound)
+	}
 	for _, pid := range pids {
-		if !slices.Contains(td.snapshot, pid) {
+		if !slices.Contains(td.aliveWhileHeld, pid) {
 			v.add("reported process %d is not among the processes alive while the request was held", pid)
 		}
 	}
-	for _, pid := range td.snapshot {
+	for _, pid := range td.aliveWhileHeld {
 		if left := remaining(pid); left != "" {
 			v.add("%s of process %d, alive while the request was held, still answers %s after StopSession returned", left, pid, holdEndBound)
 		}
 	}
-	for _, released := range td.launches {
+	for _, released := range td.heldLaunches {
 		if err := launchtest.ReleaseError(released()); err != nil {
 			v.add("launch of a process alive while the request was held, after StopSession returned: %v", err)
 		}

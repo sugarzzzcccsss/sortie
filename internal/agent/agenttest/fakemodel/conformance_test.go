@@ -289,8 +289,8 @@ func conformanceGoneRun() conformanceGoneState {
 			Session:     domain.Session{AgentPID: strconv.Itoa(conformanceRuntimePID)},
 		},
 		td: teardown{
-			snapshot: []int{conformanceRuntimePID, conformanceRuntimePID + 1},
-			launches: []func() (bool, error){func() (bool, error) { return true, nil }},
+			aliveWhileHeld: []int{conformanceRuntimePID, conformanceRuntimePID + 1},
+			heldLaunches:   []func() (bool, error){func() (bool, error) { return true, nil }},
 		},
 		remaining: map[int]string{},
 	}
@@ -1001,7 +1001,7 @@ func TestConformancePropertyRuntimeGone(t *testing.T) {
 		},
 		{
 			name:   "R-5: reported process missing from the snapshot",
-			mutate: func(s *conformanceGoneState) { s.td.snapshot = []int{pid + 1} },
+			mutate: func(s *conformanceGoneState) { s.td.aliveWhileHeld = []int{pid + 1} },
 			want:   []string{strconv.Itoa(pid)},
 		},
 		{
@@ -1011,13 +1011,13 @@ func TestConformancePropertyRuntimeGone(t *testing.T) {
 		},
 		{
 			name:   "R-6: a launch record is not released",
-			mutate: func(s *conformanceGoneState) { s.td.launches[0] = func() (bool, error) { return false, nil } },
+			mutate: func(s *conformanceGoneState) { s.td.heldLaunches[0] = func() (bool, error) { return false, nil } },
 			want:   []string{launchtest.ErrNotReleased.Error()},
 		},
 		{
 			name: "R-6: a launch record is released with a cleanup error",
 			mutate: func(s *conformanceGoneState) {
-				s.td.launches[0] = func() (bool, error) { return true, errConformanceCleanup }
+				s.td.heldLaunches[0] = func() (bool, error) { return true, errConformanceCleanup }
 			},
 			want: []string{errConformanceCleanup.Error()},
 		},

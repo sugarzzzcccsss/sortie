@@ -59,6 +59,26 @@ type SSHLab struct {
 	// RefusedHost is the ssh destination of a second sshd in the same
 	// container with AllowTcpForwarding no.
 	RefusedHost string
+
+	container string
+}
+
+// Processes returns the command line of every process the login user runs on
+// the lab host, leaving out the sshd sessions that serve its connections.
+func (l SSHLab) Processes(ctx context.Context) ([]string, error) {
+	out, err := dockerOutput(ctx, "exec", l.container, "ps", "-e", "-o", "user=,args=")
+	if err != nil {
+		return nil, fmt.Errorf("list the processes of SSH lab container %s: %w\n%s", l.container, err, tail(out))
+	}
+	var procs []string
+	for line := range strings.Lines(string(out)) {
+		user, args, _ := strings.Cut(strings.TrimSpace(line), " ")
+		args = strings.TrimSpace(args)
+		if user == sshLabUser && !strings.HasPrefix(args, "sshd") {
+			procs = append(procs, args)
+		}
+	}
+	return procs, nil
 }
 
 // SSHLabSkipReason returns why the lab cannot run on this host, or "" when it
@@ -110,7 +130,7 @@ func StartSSHLab(t testing.TB, p SSHLabParams) SSHLab {
 		seedLabDir(t, name, dir)
 	}
 	installLabSSH(t, keyPath, port, refusedPort)
-	return SSHLab{Host: sshLabHost, RefusedHost: sshLabRefusedKey}
+	return SSHLab{Host: sshLabHost, RefusedHost: sshLabRefusedKey, container: name}
 }
 
 func labDirs(p SSHLabParams) ([]string, error) {

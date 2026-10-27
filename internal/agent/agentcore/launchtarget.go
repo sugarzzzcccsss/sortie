@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/sortie-ai/sortie/internal/agent/procutil"
 	"github.com/sortie-ai/sortie/internal/agent/sshutil"
 	"github.com/sortie-ai/sortie/internal/domain"
 )
@@ -66,6 +67,11 @@ type LaunchTarget struct {
 	// target carries: a local launch runs without them, and a remote launch
 	// neither carries them nor lets the remote shell pass them to the agent.
 	WithheldEnv []string
+
+	// StopGrace is the session's resolved agent.stop_grace_ms, which a remote
+	// launch also grants its runtime once the SSH connection is gone. Zero in
+	// local mode.
+	StopGrace time.Duration
 }
 
 // ResolveLaunchTarget resolves the workspace path and agent binary for a
@@ -145,6 +151,7 @@ func resolveSSHLaunch(params domain.StartSessionParams, absPath, sshHost, remote
 		SSHHost:                  sshHost,
 		SSHStrictHostKeyChecking: params.SSHStrictHostKeyChecking,
 		SSHEnvNames:              params.SSHEnvNames,
+		StopGrace:                procutil.StopGrace(params.AgentConfig.StopGraceMS),
 	}, nil
 }
 
@@ -245,6 +252,7 @@ func (t LaunchTarget) SSHOptions(settings ...sshutil.EnvVar) sshutil.SSHOptions 
 		StrictHostKeyChecking: t.SSHStrictHostKeyChecking,
 		Env:                   carried,
 		Unset:                 slices.Clone(t.WithheldEnv),
+		StopGrace:             t.StopGrace,
 	}
 }
 

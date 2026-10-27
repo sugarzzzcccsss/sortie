@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Copilot CLI on an SSH worker host exited at startup on every turn unless the workspace was on storage shared with the worker host. It now starts. ([#1485](https://github.com/sortie-ai/sortie/issues/1485))
 - Claude Code on an SSH worker host exited at startup on every turn unless the workspace was on storage shared with the worker host. It now starts. ([#1485](https://github.com/sortie-ai/sortie/issues/1485))
 - Copilot CLI launched locally through the Agent Client Protocol (ACP) silently ignored Sortie's tools while the agent was told they existed. It can now use them, and so can other ACP agents that accept only HTTP tool servers. ([#1485](https://github.com/sortie-ai/sortie/issues/1485))
+- An agent on an SSH worker host now stops when Sortie cancels its turn or stops its session. Before, Claude Code and other runtimes waiting on the model kept running on the host, and kept spending, until stopped by hand; they now get a termination signal and, after `agent.stop_grace_ms`, a force kill. Sortie no longer reuses an SSH connection that `ControlMaster` in `ssh_config` keeps open, because a stop could not reach the host through it.
 
 ## [1.30.0] - 2026-10-23
 

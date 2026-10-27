@@ -1,0 +1,41 @@
+# shellcheck shell=sh
+# sshd sends no signal to a command it runs without a terminal when the
+# connection ends, so the agent is stopped once the shell's parent, the sshd
+# session process, is gone.
+sortie_start_agent() {
+	exec 3<&0
+	"$@" <&3 3<&- &
+	agent_pid=$!
+	exec 3<&-
+}
+
+sortie_parent_alive() {
+	kill -0 "$PPID" 2>/dev/null || [ -e "/proc/$PPID" ] || ps -p "$PPID" >/dev/null 2>&1
+}
+
+sortie_stop_session_group() {
+	grace=$1
+	trap '' TERM
+	kill -TERM 0
+	while [ "$grace" -gt 0 ] && kill -0 "$agent_pid" 2>/dev/null; do
+		sleep 1
+		grace=$((grace - 1))
+	done
+	kill -KILL 0
+}
+
+sortie_watch_parent() {
+	while sortie_parent_alive; do
+		sleep 1
+	done
+	sortie_stop_session_group "$1"
+}
+
+sortie_supervise() {
+	sortie_watch_parent "$1" </dev/null >/dev/null 2>&1 &
+	watchdog=$!
+	wait "$agent_pid"
+	status=$?
+	kill "$watchdog" 2>/dev/null
+	return "$status"
+}

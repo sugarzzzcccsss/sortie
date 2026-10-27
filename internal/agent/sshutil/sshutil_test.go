@@ -314,7 +314,7 @@ func TestBuildSSHLaunch_ZeroEnv(t *testing.T) {
 				if len(launch.Args) == 0 {
 					t.Fatalf("%s: BuildSSHLaunch(...).Args is empty", label)
 				}
-				gotFinal := launch.Args[len(launch.Args)-1]
+				gotFinal := withoutSupervisor(t, launch.Args[len(launch.Args)-1])
 				if gotFinal != tt.wantFinal {
 					t.Errorf("%s: Args final element = %q, want %q", label, gotFinal, tt.wantFinal)
 				}
@@ -329,6 +329,7 @@ func TestBuildSSHLaunch_ZeroEnv(t *testing.T) {
 					"-o", "ConnectTimeout=30",
 					"-o", "ServerAliveInterval=15",
 					"-o", "ServerAliveCountMax=3",
+					"-o", "ControlPath=none",
 					"--",
 					strings.TrimSpace(tt.host),
 				}
@@ -387,7 +388,7 @@ func TestBuildSSHLaunch_NonEmptyEnv_ExactLiterals(t *testing.T) {
 	}
 
 	const wantFinal = `cd -- '/w' && { command -v dd >/dev/null 2>&1 || { echo 'sortie: dd is required on the remote host to receive environment variables' >&2; exit 1; }; } && unset _sortie_complete && _sortie_env=$(dd bs=1 count=63 2>/dev/null) && eval "$_sortie_env" && [ "${_sortie_complete-}" = 1 ] && { run --acp 'a'` + "\n}"
-	gotFinal := launch.Args[len(launch.Args)-1]
+	gotFinal := withoutSupervisor(t, launch.Args[len(launch.Args)-1])
 	if gotFinal != wantFinal {
 		t.Errorf("final element = %q, want %q", gotFinal, wantFinal)
 	}
@@ -489,7 +490,7 @@ func TestBuildSSHLaunch_AgentArgsAndCommandTerminator(t *testing.T) {
 			t.Parallel()
 
 			launch := BuildSSHLaunch("h", "/w", tt.remoteCommand, tt.agentArgs, SSHOptions{})
-			gotFinal := launch.Args[len(launch.Args)-1]
+			gotFinal := withoutSupervisor(t, launch.Args[len(launch.Args)-1])
 			if gotFinal != tt.wantFinal {
 				t.Errorf("final element = %q, want %q", gotFinal, tt.wantFinal)
 			}
@@ -628,7 +629,7 @@ func TestBuildSSHLaunch_Unset(t *testing.T) {
 
 			launch := BuildSSHLaunch("h", "/w", "run --acp", []string{"a"}, tt.opts)
 
-			gotFinal := launch.Args[len(launch.Args)-1]
+			gotFinal := withoutSupervisor(t, launch.Args[len(launch.Args)-1])
 			if gotFinal != tt.wantFinal {
 				t.Errorf("BuildSSHLaunch(...).Args final element = %q, want %q", gotFinal, tt.wantFinal)
 			}
@@ -936,7 +937,7 @@ func TestBuildSSHLaunch_ForwardAddsOptionsBeforeTheSeparator(t *testing.T) {
 		t.Fatalf("Args = %q, want a %q separator", launch.Args, "--")
 	}
 	got := strings.Join(launch.Args[:sep], " ")
-	want := "-o ExitOnForwardFailure=no -o LogLevel=INFO -o ControlPath=none -R 127.0.0.1:0:127.0.0.1:4242"
+	want := "-o ExitOnForwardFailure=no -o LogLevel=INFO -R 127.0.0.1:0:127.0.0.1:4242"
 	if !strings.Contains(got, want) {
 		t.Errorf("options before %q = %q, want them to contain %q", "--", got, want)
 	}
@@ -996,4 +997,15 @@ func TestBuildSSHLaunch_ForwardRendersLateArgsOnlyForTheOutcome(t *testing.T) {
 			}
 		})
 	}
+}
+
+func withoutSupervisor(t *testing.T, final string) string {
+	t.Helper()
+
+	head, rest, _ := strings.Cut(final, "{\n"+supervisor+"sortie_agent() {\n")
+	agent, _, _ := strings.Cut(rest, "\n}\nsortie_start_agent")
+	if head+supervisedAgent(agent, 0) != final {
+		t.Fatalf("final element = %q, want the agent command inside the supervisor", final)
+	}
+	return head + agent
 }

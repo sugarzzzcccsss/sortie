@@ -1,0 +1,200 @@
+---
+status: accepted
+date: 2026-10-27
+decision-makers: Serghei Iakovlev
+---
+
+# Account for Agent Spend in One Usage Component Fed by Each Runtime's Own Reports
+
+## Context and Problem Statement
+
+The token ceiling, the money ceilings, the per-model cost shares, and the `cost_budget` tool all act on one figure: what a run spent. Before this decision, shared helpers held the accumulator and the completeness rule, but each agent adapter chose the channel its figure came from, mapped that channel's fields, excluded a resumed session's history by a mechanism of its own, and marked for itself when a turn was settled. Remote sessions fared unevenly. The `copilot-cli` kind and the generic `agent-client-protocol` kind declared a remote session unmeasured, because their figures came from files on the runtime's host that nothing read over SSH, while the `opencode` kind read its figure on the remote host through the runtime's own export command.
+
+The generic protocol kind carried the widest gap. The protocol's stable line carries no token counters, so a run on that kind was measured only where a reader outside the protocol applied to its runtime. The one such reader, for Gemini CLI, read the runtime's telemetry, which Sortie switched on through the runtime's environment, with the runtime's chat journal as a backstop. Every other runtime on that kind ran unmeasured: `agent.max_tokens` did not fire for it, and the money ceilings left it out. The larger the share of the roster that arrives through that kind, the larger the share that runs under no spend ceiling.
+
+The runtimes do report spend, through channels the stable line does not describe, and one field name means different things across them. In the releases current when this was decided:
+
+- Gemini CLI and OpenCode return a per-turn count on the protocol's prompt response, while Copilot CLI returns a count cumulative over its process that starts again at zero in a new process.
+- Claude Code's stream reports totals cumulative over the session, restored on resume from a record the runtime writes only when its process exits, so a killed process's spend drops out of the next total. Codex's app server repeats the previous turn's snapshot when a thread resumes, and Kiro CLI replays earlier turn reports when a session loads.
+- Gemini CLI, Copilot CLI, and Codex count cached tokens inside input, OpenCode counts them outside it, and Claude Code reports cache reads and cache writes as classes apart from input. Gemini CLI's protocol total leaves reasoning tokens out, and its journal's total includes them.
+- Gemini CLI returns no usage for a cancelled turn, and a killed process reports nothing on any channel. Codex's rollout file, Copilot CLI's session journal, and Gemini CLI's chat journal keep the requests that completed before a kill, while telemetry from a locally killed Gemini CLI process lost every record it had not flushed.
+- Kiro CLI reports spend only in credits, and Copilot CLI reports AI credits and premium requests beside its token counts.
+
+This record settles where every kind's spend figure comes from, what normalizes it, how money is derived from it, how a reader and a budget tell figures of different origin and completeness apart, which ceilings act on a run that carries no figure, and how all of it is verified locally and over SSH.
+
+## Decision Drivers
+
+1. **Accounting rules have one owner.** Converting cumulative values, normalizing cache and reasoning, discarding repeats, rebasing after a reset, and judging completeness are the same work on every kind. Spread across adapters, they drifted: resumed history was excluded by different mechanisms, journal readers kept their own size limits, and the remote exemptions were repeated in several places and kept in step only by comments and tests.
+2. **A remote session is measured like a local one.** Whatever a runtime writes to its standard streams reaches Sortie unchanged over SSH. A record on the runtime's host needs a read on that host.
+3. **A field's name does not carry its meaning.** One formula over shared field names prices cache twice on some runtimes and drops it on others. Only semantics declared per source and checked against exact figures are safe to apply.
+4. **Interrupted work is billed.** The completed requests of a cancelled or killed turn cost money whether or not a live report covers them, and the runtime's records on disk are the channel that keeps them.
+5. **Sortie does not switch on agent telemetry.** ADR-0019 states that Sortie sets no variable that enables a launched agent's telemetry. Telemetry also travels outside the session's standard streams, to a file or a network collector, and a killed process loses whatever it had not flushed.
+6. **One money figure compares across agents.** Operator rates and negotiated discounts apply only to a figure Sortie computes from its own price tables, and only such a figure means the same on every kind. Yet a model those tables cannot price left a run with no money figure even when the runtime had stated a dollar amount.
+7. **A credit is neither a dollar nor a token.** A unit the runtime's vendor defines has no rate Sortie can vouch for, and adding it to dollars or tokens corrupts both.
+8. **A figure states its origin.** A reader and a budget must tell a live figure from one read off disk, a price-table amount from a reported one, and a complete figure from a lower bound.
+9. **Accounting is proven on exact numbers.** The fake-model bench scripts the usage of every response, and the SSH lab runs the same runtime on a remote host. Before this decision the remote variant of the conformance run asserted nothing about usage.
+
+## Considered Options
+
+- Keep the generic kind's declared gap and bound its runs only with ceilings that do not count spend
+- Derive a spend figure from the context occupancy the protocol's stable line carries, published as derived
+- Keep a reader per runtime inside each adapter, telemetry included, and add remote reads adapter by adapter
+- Use agent telemetry as the source for every kind
+- Use the amount the runtime reports as the primary money figure
+- One usage component fed by each runtime's live reports and, for turns they leave unsettled, by its records on disk, with money priced from Sortie's tables
+
+## Decision Outcome
+
+Chosen option: **One usage component fed by each runtime's live reports and, for turns they leave unsettled, by its records on disk, with money priced from Sortie's tables**, because it measures every kind by one set of rules locally and over SSH, keeps those rules in one place that one contract proves, and needs no telemetry.
+
+### The usage component
+
+A package of its own, named for usage accounting and placed in the agent adapter layer, is the only code that converts a cumulative figure to a delta, applies a source's scope, normalizes cache and reasoning tokens, discards replayed and repeated figures, detects a counter reset, decides whether a figure is complete or a lower bound, and records provenance. An adapter MUST NOT do any of these itself. The component knows no runtime's format: each source, with its declaration and its parser, lives with the adapter whose runtime it describes. An adapter hands the component what the runtime said, tagged with its source; the component hands the orchestrator the run-level and per-model figures the orchestrator already consumes, each carrying provenance. The orchestrator, the domain model, and persistence name no runtime and no source format.
+
+The component produces one form for every kind. Input counts every input token, cache reads and cache writes included. Output counts every output token, reasoning included. The total is input plus output, computed by the component and never taken from a runtime, because runtimes disagree about what their own totals contain. This is the form the token budget of ADR-0013 already assumes.
+
+### Sources declare their semantics
+
+A source is one channel through which a runtime reports spend. Every source declares:
+
+- whether it reports deltas or cumulative values;
+- its scope: per request, turn, process, or session;
+- whether cache tokens sit inside its input count;
+- whether reasoning tokens sit inside its output count;
+- which frames a session load or resume replays;
+- how a repeated figure is recognized;
+- which message settles a turn;
+- the unit of any amount it reports.
+
+The component applies the declaration and MUST NOT read a field the declaration does not map. Each message and each record is checked against its source's mapping on its own: one that lacks a field the mapping needs yields an unknown amount, never zero. Sortie MUST NOT refuse or trust a build of a runtime because of its version.
+
+A cumulative value becomes a delta against the previous value from the same source within its scope. A value below the previous one is a reset and MUST NOT be recorded as negative spend: what was counted before it stays counted, and the new value counts only from the point the source's scope says the counter restarted. Where the component cannot establish that point, the turn's figure is a lower bound.
+
+The context occupancy the protocol's usage notification carries (`used` and `size`) measures how full the context window is, not what was spent, and enters no figure.
+
+### Every kind attaches a live source or says why it cannot
+
+A live source is the runtime's own output or its protocol messages. Both arrive on the session's standard streams, so a live source works the same locally and over SSH. Every kind MUST register with a live source or with a declared reason that no live usage is available, and registration refuses a kind with neither. The usage arrival and attribution the orchestrator reads for a kind follow from the sources it attached rather than being declared beside them, so the per-kind exemptions that made a remote session unmeasured disappear.
+
+The generic protocol kind attaches the protocol messages as its live source. What those messages mean differs by runtime, so declarations exist per runtime and are selected once, when the session is built, from the name the runtime gives in its handshake, at the seam ADR-0029 admitted for measurement readers. The message pump, the domain model, and the orchestrator MUST NOT branch on the runtime. A field read this way, whether on the protocol's stable line, on its unstable line, or in a vendor extension, is read as that runtime's output under its declaration, independent of the schema pin. A runtime with no declaration runs unmeasured, and the gap is reported once for the session, as ADR-0029 already does for a declared gap.
+
+### Records on disk settle what the live source did not
+
+The fallback source is the runtime's own records on disk. The component reads them only for a turn the live source did not settle: a cancelled turn, a killed process, a missing final report. For a kind whose runtime has no live source, that is every turn. For such a turn the records' figure replaces whatever the live source reported for it, and the two MUST NOT be added together. When the records hold no figure for the turn, whatever the live source reported for it stands as a lower bound.
+
+A local session reads its records directly. A remote session MUST read them through one shared remote-read operation built on the SSH launch the session itself used: the same host, options, and environment preamble, running a read-only command with every argument quoted for the remote shell. The operation resolves the runtime's home on the remote host, never from the local host's environment, and applies to the bytes it receives the same size limit a local read applies to a file. A kind MUST NOT build its own remote read.
+
+A record that does not parse yields an unknown amount, never zero. A turn that issued a model request no figure covers stays a lower bound, as before this decision. The fallback does not depend on what the protocol carries: a process that dies leaves its last turn unsettled however complete the protocol's counters become, so this source does not retire when the protocol gains counters.
+
+### Telemetry is not a source
+
+No source reads telemetry, and Sortie MUST NOT set a variable that enables a launched agent's telemetry. The Gemini CLI telemetry reader is removed: Gemini CLI's completed turns are settled by the counts on its prompt response, and its cancelled and killed turns by its chat journal. This restores the statement in ADR-0019 that the reader contradicted.
+
+### Money
+
+The money figure comes from Sortie's own price tables, the layered rates of ADR-0038, the same for every kind, so operator rates and negotiated discounts apply and ceilings compare across agents.
+
+When no table layer can price a model, the amount the runtime reported for that model's spend is used instead and marked agent-reported, and only when the amount is in US dollars. A reported amount belongs to a model when its source attributes it to that model, or when the run used that model alone; an amount that cannot be attributed leaves the share unpriced. A reported amount of zero for spend that carried tokens is no amount. A cumulative reported amount becomes a delta per source under the reset rule above. A child session's amount MUST NOT be added to its parent's, because a parent's cumulative amount may already include its children's work. A share the tables price only in part stays `partial`: the fallback covers only a model the tables cannot price at all.
+
+The run record keeps both figures side by side: Sortie's figure and, whenever the runtime reported one, the reported amount in its unit.
+
+Under a subscription login every dollar figure, Sortie's or the runtime's, is a list-price equivalent, or an operator-rate equivalent where `token_rates` sets the rate, and never a charge; a money ceiling bounds that equivalent. Sortie does not detect the login type, so the meaning holds for every figure.
+
+### Vendor units
+
+An amount in any unit other than US dollars, such as Kiro CLI's credits or Copilot CLI's AI credits and premium requests, is recorded and shown in its own unit. It MUST NOT be converted to dollars or tokens or added to a token or money figure, and no ceiling reads it. A token field such a runtime leaves at zero is no figure: Kiro CLI's records carry token fields that hold zero whatever it spent.
+
+### Ceilings for a run without a token or money figure
+
+A run whose spend is known only in vendor units, and a run with no figure at all, add nothing to the totals the token and money ceilings compare. Those totals then become lower bounds, the run counts among the unmeasured runs, and dispatch proceeds.
+
+| Ceiling | Run with a token figure | Run with spend only in vendor units | Run with no figure |
+| --- | --- | --- | --- |
+| `agent.max_sessions` | Applies | Applies | Applies |
+| `agent.max_turns` | Applies | Applies | Applies |
+| `agent.turn_timeout_ms` and `agent.stall_timeout_ms` | Apply | Apply | Apply |
+| `agent.max_consecutive_absences` | Applies | Applies | Applies |
+| `agent.max_tokens` | Counts the figure | Counts nothing | Counts nothing |
+| `agent.max_cost_usd`, `agent.max_daily_cost_usd`, `agent.max_weekly_cost_usd`, and `agent.max_monthly_cost_usd` | Count the money figure | Count nothing | Count nothing |
+
+### Pricing classes
+
+Pricing keeps its classes: fresh input (input less cache reads and cache writes), cache read, cache write, and output, reasoning included. Each source's cache declaration places every cache token in exactly one class, so no cache token is priced twice.
+
+The embedded price table carries one cache-write rate per model and no separate rate for cache writes with a longer lifetime, and Sortie reads one cache-write rate per model from every table and from `token_rates`. A long-lived cache write, which Claude Code reports apart from short-lived ones, counts in the cache-write class and is priced at that class's rate. At list prices a long-lived write costs more than a short-lived one, so the money figure understates that part of a run that writes long-lived cache; ADR-0038 already lists it among the limits of the estimate. No class is added, and the share is not marked `partial` for it, because a class no table prices would turn every such healthy run into a lower bound.
+
+### Provenance
+
+The run record MUST persist, for its token figure, every source that contributed, the strategy each used (live, or records on disk), and the figure's completeness: complete, lower bound, or unmeasured. Each per-model cost share MUST persist whether the price table or a reported amount priced it, beside the price source and table version ADR-0038 already records. Source names come from a closed vocabulary of vendor-neutral categories that the usage component owns, so persistence and the orchestrator stay free of runtime names. The JSON API, the dashboard, and `sortie stats` show a run's provenance wherever they show that run's spend, and mark an aggregate that includes a lower bound or an unmeasured run as a lower bound.
+
+The token and money ceilings sum complete figures, lower bounds, and agent-reported amounts alike, and report a total as a lower bound whenever any part of it is one or any run in it is unmeasured.
+
+### Verification
+
+One conformance contract runs for every kind that launches a runtime, on the fake-model bench and in the SSH lab, locally and over SSH. For each scripted scenario it asserts that the figure equals, per class and exactly, the scripted usage of the requests the bench served, and that the provenance names the expected source and strategy. The scenarios cover a completed turn, a turn with a tool call, a resumed session, a cancelled turn, and a killed turn, so the fallback is proven wherever it applies. The generic protocol kind runs the contract for each runtime that has a declaration and that the bench can serve.
+
+### What this supersedes
+
+- From ADR-0029's account of where token counts come from:
+  - the rule that the protocol's usage notification and its unstable per-turn counters are corroboration that influences no decision;
+  - the conditions on a measurement source outside the protocol, of which per-record validation, selection at one seam, failing closed, and unmeasured spend as a lower bound survive in this record, while the conformance contract takes the place of the one-off recorded experiment;
+  - Gemini CLI's telemetry as a confirmed source;
+  - the retirement of such a source once the protocol carries counters;
+  - the discarding of a reported cache-write count;
+  - the refusal to consume the protocol's cost figure;
+  - for fields a declared source reads, the requirement that treating a later protocol addition as a source of truth moves the schema pin.
+
+  Where ADR-0029 says the adapter computes the total, the usage component now does. The rest of ADR-0029 stands.
+- From ADR-0038, the rejection of the runtime's own cost figure, and the rule that a share no layer prices contributes nothing, both of which now give way to an attributable reported amount in US dollars for a model the tables cannot price. The layered tables, the price fixed when a run is written, and the window rules stand.
+- ADR-0013's budget unit and ADR-0036's attribution of spend to models are unchanged.
+
+### Considered Options in Detail
+
+**Keeping the declared gap.** It costs nothing to build, and the session, turn, time, and absence ceilings still bound every run. But the runtimes on the generic kind report spend that this option leaves unread, and the share of the roster without a token or money ceiling grows with every runtime that arrives on the protocol.
+
+**Deriving a figure from context occupancy.** Occupancy is the size of the context, not what was billed: it falls after compaction, says nothing about how many requests a turn made, and does not separate cache from fresh input. A figure derived from it is a guess that a budget would act on, however clearly it is labeled.
+
+**A reader per runtime inside each adapter.** This was the state before this decision, and its cost is the drift the first driver describes. Every new reader decides remote handling, resets, and completeness again, and the telemetry one reader relied on contradicts ADR-0019.
+
+**Telemetry for every kind.** It needs Sortie to switch on a launched agent's telemetry, which ADR-0019 rules out. Over SSH it needs a collector the remote runtime can reach outside the session's standard streams, and a killed process loses its unflushed records. Copilot CLI writes no telemetry in its protocol mode, and Codex reports a dollar cost only through its telemetry exporter, after a poll that runs every 150 seconds.
+
+**The reported amount as the primary money figure.** It follows each runtime's own price list rather than the operator's rates, Gemini CLI and Codex report no amount on their live channels, and Copilot CLI and Kiro CLI report units that are not dollars. It survives as the fallback for a model the tables cannot price.
+
+## Consequences
+
+### Positive
+
+- Every kind is measured by one set of rules, locally and over SSH, and a run on the generic protocol kind carries token and money figures whenever its runtime has a declaration.
+- The completed requests of a cancelled or killed turn are counted wherever the runtime recorded them.
+- The accounting rules exist once, and one contract proves them on exact figures on both sides of an SSH connection.
+- Sortie switches on no agent telemetry.
+- A model the tables cannot price no longer erases a run's money figure when the runtime reported one in dollars.
+- A reader and a budget see where every figure came from and whether it is complete.
+
+### Negative
+
+- **Records on disk are undocumented formats that change between releases.** Copilot CLI's session journal gained a per-request usage record between releases. A change that breaks parsing yields unknown amounts and lower bounds, but a change that keeps a record parseable while changing what a field means undercounts silently until the gated contract or an operator notices.
+- **A turn killed before the runtime wrote its record stays a lower bound.** A Claude Code process killed immediately after a request can leave no journal entry for it.
+- **Declarations for the generic kind are manual work.** Each runtime's semantics are measured and declared by hand, and a runtime without a declaration stays unmeasured.
+- **A reported amount follows the runtime's price list.** A money total that includes one mixes Sortie's rates with that runtime's prices for the models Sortie cannot price, and provenance names every such share.
+- **Vendor units stay outside every token and money ceiling.** Only the session, turn, time, and absence ceilings bound a run that spends only in credits.
+- **Long-lived cache writes are understated.** They are priced at the cache-write rate for as long as no table carries a rate for them.
+- **A remote fallback read costs an SSH connection.** Each unsettled turn of a remote session, and every turn of a remote session whose runtime has no live source, opens a connection with its own handshake unless the operator's SSH configuration shares connections.
+- **Persistence gains provenance.** Run records and per-model shares gain provenance and the reported amount; rows written earlier carry none and show their provenance as unknown.
+- **The bench cannot script an amount a vendor's service computes.** Kiro CLI's credits come from its vendor's service, so the contract cannot verify them.
+
+## Confirmation
+
+The decision is satisfied when all of the following hold:
+
+1. No adapter package converts a cumulative figure to a delta, normalizes cache or reasoning tokens, discards a replayed or repeated figure, detects a counter reset, or decides completeness; a search finds these operations only in the usage component.
+2. Registering a kind that attaches no live source and declares no reason fails, and a test that enumerates every registered kind finds each with one or the other.
+3. Every source carries a declaration of each property listed under "Sources declare their semantics", and a message or record that lacks a field its mapping needs contributes no amount and leaves its turn unsettled. No code path decides by a runtime's version whether to read its output or its records.
+4. A remote session of every kind reads its records through the shared remote-read operation over its own SSH launch, and a remote session is measured whenever the same runtime run locally would be.
+5. No code path sets a variable that enables a launched agent's telemetry, and no source reads telemetry.
+6. A cumulative series that falls is never recorded as negative spend, and the spend counted before the fall stays counted.
+7. A run on a model no table layer prices records the runtime's attributable US-dollar amount as that share's cost, marked agent-reported; an amount in any other unit leaves the share unpriced and is recorded in its own unit; a child session's amount is never added to its parent's.
+8. A run whose spend is only in vendor units, and a run with no figure, add nothing to the totals `agent.max_tokens` and the money ceilings compare, make those totals lower bounds, and remain bounded by `agent.max_sessions`, `agent.max_turns`, `agent.turn_timeout_ms`, `agent.stall_timeout_ms`, and `agent.max_consecutive_absences`.
+9. A long-lived cache write is priced at the cache-write rate and does not mark its share `partial`.
+10. Every run record carries its token figure's sources, strategies, and completeness, and every priced share carries whether the price table or a reported amount priced it.
+11. Every kind that launches a runtime passes the conformance contract locally and in the SSH lab, with the exact scripted figure and the expected source and strategy, for completed, tool-calling, resumed, cancelled, and killed turns.

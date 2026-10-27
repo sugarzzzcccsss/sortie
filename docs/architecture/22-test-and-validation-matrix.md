@@ -419,7 +419,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 
 - Launch command uses workspace cwd and execs the resolved binary directly with an argument vector
 - A remote launch invokes the local `ssh` binary, runs the agent in the remote workspace, and delivers every carried variable on the session's standard input ahead of the agent command, with no carried value in any argument; a remote host without `dd` fails the launch with the operator-visible message instead of running the agent, a preamble that arrives incomplete fails the launch rather than starting the agent without its variables, and a local launch carries none of it
-- If a remote launch delivers Sortie's tools, it adds the forward options and a remote forward of a loopback port the remote host allocates, with connection sharing off for that launch
+- A remote launch turns SSH connection sharing off, and ending its ssh client stops the agent on the remote host after `agent.stop_grace_ms`, even when the operator's `ssh_config` enables `ControlMaster` with `ControlPersist`
+- If a remote launch delivers Sortie's tools, it adds the forward options and a remote forward of a loopback port the remote host allocates
 - If a remote launch delivers Sortie's tools, it reads the forward's outcome from the ssh client's standard error before any byte reaches the agent
 - If a remote launch delivers Sortie's tools, outcome-dependent agent arguments travel on standard input through `set --`, never in an argument
 - If a remote launch delivers Sortie's tools, a refused or unconfirmed forward still runs the agent, without the declaration, and the session opens with the gap declared

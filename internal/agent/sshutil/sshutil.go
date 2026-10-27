@@ -3,6 +3,7 @@
 package sshutil
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ErrConnectionFailed marks an ssh client that failed to connect, as
@@ -115,6 +117,10 @@ type SSHOptions struct {
 	// command runs only after the outcome resolves; see
 	// [SSHLaunch.WatchStderr].
 	Forward *ReverseForward
+
+	// StopGrace is how long the remote agent has between SIGTERM and SIGKILL
+	// once its SSH connection is gone, rounded up to whole seconds.
+	StopGrace time.Duration
 }
 
 func (o SSHOptions) forwardHostPort() (int, bool) {
@@ -214,6 +220,10 @@ func buildSSHOpts(host string, opts SSHOptions) []string {
 		"-o", "ConnectTimeout=30",
 		"-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=3",
+		// A shared connection outlives this client, so the remote supervisor
+		// would never see it end, and its master would own a forward's
+		// allocation line.
+		"-o", "ControlPath=none",
 	}
 	if opts.Forward != nil {
 		args = append(args, forwardOptions(opts.Forward.HostPort)...)
@@ -223,9 +233,7 @@ func buildSSHOpts(host string, opts SSHOptions) []string {
 
 // forwardOptions returns the ssh options a forwarded launch adds. A refused
 // forward must not end the launch; LogLevel=INFO keeps the allocation line
-// visible whatever the operator's ssh_config sets; ControlPath=none stops a
-// multiplexing master from owning the forward and logging the allocation
-// line away from this process's standard error. Remote port 0 lets sshd
+// visible whatever the operator's ssh_config sets. Remote port 0 lets sshd
 // allocate one, since a fixed port collides across sessions on one host.
 //
 // It panics when hostPort is outside 1..65535.
@@ -236,7 +244,6 @@ func forwardOptions(hostPort int) []string {
 	return []string{
 		"-o", "ExitOnForwardFailure=no",
 		"-o", "LogLevel=INFO",
-		"-o", "ControlPath=none",
 		"-R", "127.0.0.1:0:127.0.0.1:" + strconv.Itoa(hostPort),
 	}
 }
@@ -265,6 +272,20 @@ func agentGroup(remoteCommand string, agentArgs []string, positional bool) strin
 		parts = append(parts, terminator)
 	}
 	return "{ " + strings.Join(parts, " ") + "\n}"
+}
+
+//go:embed supervise.sh
+var supervisor string
+
+// supervisedAgent runs agent under supervisor, which ends the session's
+// process group once the SSH connection is gone, granting the agent grace
+// rounded up to whole seconds between SIGTERM and SIGKILL.
+func supervisedAgent(agent string, grace time.Duration) string {
+	graceSeconds := strconv.Itoa(int((grace + time.Second - 1) / time.Second))
+	return "{\n" + supervisor +
+		"sortie_agent() {\n" + agent + "\n}\n" +
+		`sortie_start_agent sortie_agent "$@"` + "\n" +
+		"sortie_supervise " + graceSeconds + "\n}"
 }
 
 // shellBlanks holds the trailing characters a POSIX shell either
@@ -371,6 +392,7 @@ func BuildSSHLaunch(host, workspacePath, remoteCommand string, agentArgs []strin
 	if len(opts.Unset) > 0 {
 		agent = "unset " + strings.Join(opts.Unset, " ") + " && " + agent
 	}
+	agent = supervisedAgent(agent, opts.StopGrace)
 
 	if opts.Forward != nil {
 		return buildForwardedLaunch(sshOpts, workspacePath, agent, opts)

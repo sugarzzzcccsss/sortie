@@ -490,6 +490,7 @@ Graceful shutdown sequence:
 - On context cancellation or `StopSession`, the adapter sends a platform-appropriate graceful shutdown signal to the process group:
   - POSIX: `SIGTERM` to the process group (`kill(-pgid, SIGTERM)`).
   - Windows: `CTRL_BREAK_EVENT` via `GenerateConsoleCtrlEvent` to the process group.
+- On a remote launch the local process group holds the ssh client, so the signal ends the connection rather than reaching the runtime. The remote shell then runs the same sequence on the worker host: `SIGTERM` to the session's process group, the same grace period rounded up to whole seconds, then `SIGKILL`. See [Appendix A. SSH Worker Extension (Optional)](27-appendix-a-ssh-worker-extension.md).
 - The grace period that follows (`agent.stop_grace_ms`, default 5 seconds) is a ceiling: a shorter caller deadline shortens it. Where an adapter's transport defines a session-close method the runtime advertised, part of that period is spent ahead of the signal, closing the session through the protocol before it is sent. When the grace period or the caller's deadline elapses, whichever comes first, the adapter force-terminates the process tree:
   - POSIX: `SIGKILL` to the process group, resent on a fixed poll interval until the launch's reap takes over or the 2-second group-drain bound elapses.
   - Windows: `TerminateJobObject`, resent the same way until the Job Object reports no running member or the group-drain bound elapses.

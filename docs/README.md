@@ -90,6 +90,13 @@ These pages are for working on Sortie itself. To install, configure, and run Sor
     - [Keep both kinds registered and retire a hand-written one only at parity](decisions/0030-keep-both-kinds-registered-and-retire-only-at-parity.md)
     - [Let a dispatch rule carry the settings of the agent kind it selects](decisions/0031-let-a-dispatch-rule-carry-its-agent-kinds-settings.md)
     - [Route Outbound Messages Through Per-Destination Event Subscriptions](decisions/0032-route-outbound-messages-through-per-destination-event-subscriptions.md)
+    - [Advance an issue to the next stage by swapping a stage label](decisions/0033-advance-an-issue-to-the-next-stage-by-swapping-a-stage-label.md)
+    - [Build the dashboard as a React application committed and embedded in the binary](decisions/0034-build-the-dashboard-as-an-embedded-react-application.md)
+    - [Retain agent events per run and stream them on the change stream](decisions/0035-retain-agent-events-per-run-and-stream-them-on-the-change-stream.md)
+    - [Label usage, runtime and exit counters by model](decisions/0036-label-usage-runtime-and-exit-counters-by-model.md)
+    - [Supply a built-in prompt for every reaction run](decisions/0037-supply-a-built-in-prompt-for-every-reaction-run.md)
+    - [Price runs from a layered rate table and record the price when the run is written](decisions/0038-price-runs-from-a-layered-rate-table-and-record-the-price-at-write.md)
+    - [Account for agent spend in one usage component fed by each runtime's own reports](decisions/0039-account-for-agent-spend-in-one-usage-component.md)
 - **Process**
   - [Contributing](../CONTRIBUTING.md) - setup, making a change, code and testing conventions, commits and PRs
   - [Releasing](../RELEASING.md) - the ordered checklist for cutting a release
