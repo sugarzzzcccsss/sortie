@@ -2,7 +2,7 @@
 
 Working notes for anyone changing Sortie's Claude Code adapter in `internal/agent/claude`.
 
-Last updated: 2026-10-17
+Last updated: 2026-10-27
 
 ## Where to get the volatile facts
 
@@ -25,6 +25,8 @@ The CLI can also run against a cloud vendor's hosted models or a gateway. For th
 ## Turn boundaries and ours
 
 Claude Code has its own idea of a turn, an agentic loop inside one invocation. A Sortie turn is one invocation, and inside it the CLI may run many of its own. The adapter does not bound that inner loop unless the workflow asks for it: letting the loop run to completion keeps a multi-step plan from being cut in half and avoids paying process startup per step. The orchestrator re-reads tracker state between Sortie turns, which is where the real control loop lives.
+
+When the invocation ends with background work still live, the adapter emits one notification before the terminal event. It states how many tasks were unfinished and that they stopped with the session; it does not change the turn's outcome or retry policy. Completed, failed, stopped, and ambient tasks are not counted. The runtime's live-set snapshots replace earlier observations, and a completion for an older run cannot finish a resumed task. Tracking starts empty for each invocation, so unfinished work is not carried into the next turn. The notification contains only the count, never task descriptions or output.
 
 ## Approvals, and requests only a person can answer
 

@@ -125,6 +125,7 @@ type sessionState struct {
 	emittedAPITiming  bool
 	inFlight          *agentcore.ToolTracker
 	work              *agentcore.WorkObserver
+	backgroundTasks   map[string]backgroundTask
 
 	// humanInputEnds and humanInputDetail record a recognized request that
 	// only a person could answer, observed in ParseLine on a
@@ -327,6 +328,7 @@ func (a *ClaudeCodeAdapter) StartSession(ctx context.Context, params domain.Star
 
 			switch event.Type {
 			case "system":
+				state.observeBackgroundTasks(event)
 				switch event.Subtype {
 				case "init":
 					if event.SessionID != "" {
@@ -567,8 +569,16 @@ func (a *ClaudeCodeAdapter) RunTurn(ctx context.Context, session domain.Session,
 	state.humanInputEnds = false
 	state.humanInputDetail = ""
 	state.authRefused = false
+	state.backgroundTasks = make(map[string]backgroundTask)
 
-	return state.forkSession.RunTurn(ctx, params.Prompt, params.OnEvent)
+	return state.forkSession.RunTurn(ctx, params.Prompt, func(event domain.AgentEvent) {
+		switch event.Type {
+		case domain.EventTurnCompleted, domain.EventTurnFailed, domain.EventTurnCancelled,
+			domain.EventTurnEndedWithError, domain.EventTurnInputRequired:
+			state.reportBackgroundTasks(params.OnEvent)
+		}
+		params.OnEvent(event)
+	})
 }
 
 // StopSession terminates a running Claude Code subprocess gracefully by

@@ -27,6 +27,18 @@ type rawEvent struct {
 	// System/permission_denied fields.
 	ToolName string `json:"tool_name,omitempty"`
 
+	// Task lifecycle fields.
+	TaskID         string              `json:"task_id,omitempty"`
+	RunID          string              `json:"run_id,omitempty"`
+	Status         string              `json:"status,omitempty"`
+	Ambient        bool                `json:"ambient,omitempty"`
+	IsBackgrounded *bool               `json:"is_backgrounded,omitempty"`
+	Tasks          []rawBackgroundTask `json:"tasks,omitempty"`
+	Patch          struct {
+		Status         string `json:"status,omitempty"`
+		IsBackgrounded *bool  `json:"is_backgrounded,omitempty"`
+	} `json:"patch,omitempty"`
+
 	// Result fields.
 	Result      string `json:"result,omitempty"`
 	IsError     bool   `json:"is_error,omitempty"`

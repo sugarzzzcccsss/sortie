@@ -1931,7 +1931,6 @@ func TestRunTurn_UnknownEventType(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	script := fakeClaude(t, tmpDir, agenttest.Output{Stdout: `{"type":"unknown_future_type","data":"something"}
-{"type":"system","subtype":"task_started","task_id":"t1"}
 {"type":"rate_limit_event"}
 {"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}]}}
 {"type":"result","subtype":"success","result":"ok","is_error":false,"usage":{"input_tokens":1,"output_tokens":1}}
@@ -1967,8 +1966,8 @@ func TestRunTurn_UnknownEventType(t *testing.T) {
 			t.Errorf("%s message = %q, want blank", e.Type, e.Message)
 		}
 	}
-	if pings != 4 {
-		t.Errorf("blank pings = %d, want 4", pings)
+	if pings != 3 {
+		t.Errorf("blank pings = %d, want 3", pings)
 	}
 }
 

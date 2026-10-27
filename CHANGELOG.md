@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Claude Code turns now report how many background tasks were still running when the turn ended and stopped with the session. The notice appears in the run's events without changing its outcome. ([#1380](https://github.com/sortie-ai/sortie/issues/1380))
 - Overview now lists, under 'Not dispatched', the issues in an active state that Sortie holds back from dispatch, each with why it waits and what releases it: an open blocker with its key and state, a blocker read that failed or waits for a later poll, a full agent slot limit with its usage, no free SSH host, or the spend ceiling until it resets. An issue between stages shows its hold on its Active row. The state API serves them as `held`, and a between-stages row carries its hold as `hold`. ([#1387](https://github.com/sortie-ai/sortie/issues/1387))
 - After a person releases a parked issue, its next run continues the agent's earlier session where the agent supports it, and prompt templates can hand the agent its own stop reason and the person's reply through the new `park` variable. ([#1394](https://github.com/sortie-ai/sortie/issues/1394))
 - Agents running on an SSH worker host can now use Sortie's tools and the HTTP tool servers configured under `mcp_config`. Tracker credentials never leave the machine running Sortie. If the worker host forbids SSH port forwarding, the session runs without Sortie's tools, and the log and session events say so. ([#1485](https://github.com/sortie-ai/sortie/issues/1485))
